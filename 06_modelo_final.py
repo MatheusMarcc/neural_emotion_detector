@@ -6,47 +6,51 @@ decisão anterior viu). A configuração vencedora do script 03 é treinada no
 treino completo (16.000 tweets), com a validação oficial (2.000) acompanhando
 a curva de aprendizado, e avaliada uma única vez no teste.
 
-TEORIA — métricas numa base desbalanceada
------------------------------------------
-  precisão(k)  = dos tweets que o modelo chamou de k, quantos eram k
-  revocação(k) = dos tweets que eram k, quantos o modelo achou
-  F1(k)        = média harmônica das duas = 2·P·R / (P + R)
-  F1 macro     = média simples dos F1 das 6 classes (cada classe pesa igual)
-  acurácia     = acertos / total (dominada pelas classes grandes)
+MÉTRICAS (teoria completa em src/metricas.py)
+---------------------------------------------
+  acurácia                  acertos / total (dominada pelas classes grandes)
+  precisão, revocação, F1   por classe, e resumidas de dois jeitos:
+     macro = média das 6 classes (cada emoção pesa igual)
+     micro = contas somadas sobre todos os tweets (= acurácia, com 1 rótulo por tweet)
+  curva ROC e AUROC         uma curva por emoção (uma contra as outras): mede se a
+                            rede ORDENA bem os tweets pela probabilidade, sem depender
+                            do limiar. 0,5 = sorteio; 1,0 = perfeito.
 
-Um modelo que chutasse sempre "alegria" teria 34,8% de acurácia e F1 macro
-de 0,086 no teste — por isso olhamos as duas métricas.
-
-Duas referências para comparar:
-  * classe majoritária (o piso);
+Referências para comparar (todas no mesmo teste):
+  * Random Stratified Baseline: sorteia a classe na proporção do treino (o piso
+    pedido no enunciado; acerta ~24% e tem AUROC ~0,5);
+  * classe majoritária: chuta sempre "alegria" (34,8% de acurácia, F1 macro 0,086);
   * regressão logística no mesmo TF-IDF: um modelo LINEAR. Se a MLP não for
     melhor que ela, as camadas ocultas não estão ajudando nesta tarefa.
 
 Saídas:
-  resultados/06_modelo_final.json, 06_metricas_por_classe.csv, 06_erros_exemplos.csv
-  figuras/06_curva_modelo_final.png, 06_matriz_confusao.png
+  resultados/06_modelo_final.json, 06_metricas_resumo.csv, 06_metricas_por_classe.csv,
+             06_erros_exemplos.csv
+  figuras/06_curva_modelo_final.png, 06_matriz_confusao.png, 06_curva_roc.png
 """
 import json
 
 import numpy as np
 import pandas as pd
 from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import (accuracy_score, classification_report, confusion_matrix,
-                             f1_score)
+from sklearn.metrics import confusion_matrix, f1_score
 
-from src import config, dados, graficos
+from src import backend, config, dados, graficos, metricas
 from src.mlp import MLP
 
+# cor de cada emoção na curva ROC (índices da paleta; azul e laranja ficam para ReLU/Sigmoid)
+COR_CLASSE = [6, 3, 4, 7, 5, 2]
 
-def regressao_logistica(X_tr, y_tr, X_va, y_va, X_te):
-    """Escolhe o C (inverso da regularização) na validação e prevê o teste."""
+
+def regressao_logistica(X_tr, y_tr, X_va, y_va):
+    """Escolhe o C (inverso da regularização) na validação; devolve o C e o modelo."""
     melhor = None
     for C in (0.1, 1, 10, 100):
         m = LogisticRegression(C=C, max_iter=3000).fit(X_tr, y_tr)
         f1 = f1_score(y_va, m.predict(X_va), average="macro")
         if melhor is None or f1 > melhor[0]:
             melhor = (f1, C, m)
-    return melhor[1], melhor[2].predict(X_te)
+    return melhor[1], melhor[2]
 
 
 def fig_curva(hist):
@@ -104,7 +108,45 @@ def fig_confusao(cm):
     graficos.salvar(desenhar, "06_matriz_confusao")
 
 
+def fig_roc(curvas_mlp, auc_classes, auc_mlp, curvas_ref):
+    """Esquerda: ROC da MLP por emoção. Direita: média macro da MLP × referências."""
+
+    def desenhar(P):
+        import matplotlib.pyplot as plt
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12.5, 5.4))
+        for ax in (ax1, ax2):
+            ax.plot([0, 1], [0, 1], color=P.mudo, ls=":", lw=1.2)
+            ax.set(xlim=(0, 1), ylim=(0, 1.01), xlabel="taxa de falsos positivos (FPR)",
+                   ylabel="taxa de verdadeiros positivos (TPR = revocação)")
+            ax.set_aspect("equal")
+        for k, nome in enumerate(config.CLASSES_PT):
+            fpr, tpr = curvas_mlp[k]
+            ax1.plot(fpr, tpr, color=P.serie(COR_CLASSE[k]), lw=1.8,
+                     label=f"{nome}  (AUC {graficos.num(auc_classes[k])})")
+        fpr, tpr = curvas_mlp["micro"]
+        ax1.plot(fpr, tpr, color=P.texto, lw=1.6, ls="--",
+                 label=f"média micro  (AUC {graficos.num(auc_mlp['auc_micro'])})")
+        ax1.legend(loc="lower right", fontsize=9)
+        ax1.set_title("MLP no teste: uma emoção contra as outras", loc="left")
+
+        fpr, tpr = curvas_mlp["macro"]
+        ax2.plot(fpr, tpr, color=P.cor("relu"), lw=2.2,
+                 label=f"MLP (nossa)  —  AUROC macro {graficos.num(auc_mlp['auc_macro'])}")
+        estilos = {"Regressão logística": dict(color=P.texto2, lw=1.8, ls="--"),
+                   "Random Stratified Baseline": dict(color=P.mudo, lw=1.8, ls="-.")}
+        for nome, (curva, auc) in curvas_ref.items():
+            ax2.plot(*curva, label=f"{nome}  —  {graficos.num(auc)}", **estilos[nome])
+        ax2.legend(loc="lower right", fontsize=9)
+        ax2.set_title("Média macro: MLP × referências", loc="left")
+        ax1.text(0.62, 0.36, "diagonal = sorteio", color=P.mudo, fontsize=8.5, rotation=45)
+        fig.tight_layout()
+        return fig
+
+    graficos.salvar(desenhar, "06_curva_roc")
+
+
 if __name__ == "__main__":
+    print("Onde a MLP roda:", backend.descrever())
     with open(config.RESULTADOS / "melhor_config.json", encoding="utf-8") as f:
         melhor = json.load(f)
     camadas, l2, ativ = tuple(melhor["camadas"]), melhor["l2"], melhor["ativacao"]
@@ -124,33 +166,41 @@ if __name__ == "__main__":
     P_te = modelo.prever_proba(X_te)
     pred = P_te.argmax(axis=1)
 
-    # referências
-    maj = np.full_like(y_te, np.bincount(y_tr).argmax())
-    C, pred_lr = regressao_logistica(X_tr, y_tr, X_va, y_va, X_te)
+    # referências — todas devolvem probabilidades no formato N x 6
+    C, lr = regressao_logistica(X_tr, y_tr, X_va, y_va)
+    P_lr = lr.predict_proba(X_te)
+    P_estrat = metricas.baseline_estratificado(y_tr, len(y_te), semente=config.SEMENTE)
+    P_maj = np.zeros_like(P_te)
+    P_maj[:, np.bincount(y_tr).argmax()] = 1
 
-    def metricas(p):
-        return dict(acc=float(accuracy_score(y_te, p)),
-                    f1_macro=float(f1_score(y_te, p, average="macro")),
-                    f1_ponderado=float(f1_score(y_te, p, average="weighted")))
+    modelos = {"MLP (nossa)": P_te, "Regressão logística": P_lr,
+               "Random Stratified Baseline": P_estrat, "Classe majoritária": P_maj}
+    resumo = pd.DataFrame([dict(modelo=nome, **metricas.metricas_completas(y_te, Pm))
+                           for nome, Pm in modelos.items()])
+    resumo.to_csv(config.RESULTADOS / "06_metricas_resumo.csv", index=False)
+
+    pc = metricas.metricas_por_classe(y_te, P_te)
+    por_classe = pd.DataFrame(dict(classe=config.CLASSES_PT, classe_en=config.CLASSES,
+                                   precisao=pc["precisao"], revocacao=pc["revocacao"], f1=pc["f1"],
+                                   auc=pc["auc"], suporte=pc["suporte"].astype(int)))
+    por_classe.to_csv(config.RESULTADOS / "06_metricas_por_classe.csv", index=False)
+    cm = confusion_matrix(y_te, pred)
 
     resultado = dict(config=melhor["config"], camadas=camadas, l2=l2, ativacao=ativ,
-                     n_parametros=modelo.n_parametros(),
-                     mlp=metricas(pred), classe_majoritaria=metricas(maj),
-                     regressao_logistica=dict(C=C, **metricas(pred_lr)),
+                     dispositivo=modelo.dispositivo, n_parametros=modelo.n_parametros(),
+                     validacao_cruzada=dict(n_folds=melhor["n_folds"],
+                                            f1_macro_media=melhor["f1_val_media"],
+                                            f1_macro_ic95=melhor["f1_val_ic"],
+                                            acc_media=melhor["acc_val_media"],
+                                            acc_ic95=melhor["acc_val_ic"],
+                                            f1_por_fold=melhor["f1_por_fold"]),
+                     teste={linha["modelo"]: {k: float(v) for k, v in linha.items() if k != "modelo"}
+                            for linha in resumo.to_dict(orient="records")},
+                     regressao_logistica_C=C,
                      validacao_final=dict(acc=hist["acc_val"][-1], f1=hist["f1_val"][-1],
                                           perda=hist["perda_val"][-1]),
                      epoca_menor_perda_val=int(np.argmin(hist["perda_val"])) + 1,
-                     historico=hist)
-
-    rel = classification_report(y_te, pred, target_names=config.CLASSES_PT, output_dict=True,
-                                zero_division=0)
-    por_classe = pd.DataFrame([dict(classe=c, classe_en=config.CLASSES[k],
-                                    precisao=rel[c]["precision"], revocacao=rel[c]["recall"],
-                                    f1=rel[c]["f1-score"], suporte=int(rel[c]["support"]))
-                               for k, c in enumerate(config.CLASSES_PT)])
-    por_classe.to_csv(config.RESULTADOS / "06_metricas_por_classe.csv", index=False)
-    cm = confusion_matrix(y_te, pred)
-    resultado["matriz_confusao"] = cm.tolist()
+                     matriz_confusao=cm.tolist(), historico=hist)
 
     # erros mais "confiantes": onde a rede deu probabilidade alta para a classe errada
     erradas = np.flatnonzero(pred != y_te)
@@ -164,12 +214,20 @@ if __name__ == "__main__":
 
     with open(config.RESULTADOS / "06_modelo_final.json", "w", encoding="utf-8") as f:
         json.dump(resultado, f, indent=1, ensure_ascii=False)
+
+    curvas_mlp = metricas.curvas_roc(y_te, P_te)
+    curvas_ref = {nome: (metricas.curvas_roc(y_te, modelos[nome])["macro"],
+                         float(resumo.loc[resumo.modelo == nome, "auc_macro"].iloc[0]))
+                  for nome in ("Regressão logística", "Random Stratified Baseline")}
     fig_curva(hist)
     fig_confusao(cm)
+    fig_roc(curvas_mlp, pc["auc"], resumo.iloc[0], curvas_ref)
 
+    vc = resultado["validacao_cruzada"]
+    print(f"\nValidação cruzada ({vc['n_folds']} folds): F1 macro {vc['f1_macro_media']:.4f} "
+          f"(IC 95%: {vc['f1_macro_media'] - vc['f1_macro_ic95']:.4f} a "
+          f"{vc['f1_macro_media'] + vc['f1_macro_ic95']:.4f})")
     print(f"\nTeste ({len(y_te)} tweets)")
-    for nome, chave in (("MLP (nossa)", "mlp"), ("Regressão logística", "regressao_logistica"),
-                        ("Classe majoritária", "classe_majoritaria")):
-        r = resultado[chave]
-        print(f"  {nome:22s} acurácia {r['acc']:.4f}   F1 macro {r['f1_macro']:.4f}")
+    pd.set_option("display.width", 200)
+    print(resumo.set_index("modelo").round(3).to_string())
     print("\n", por_classe.round(3).to_string(index=False))

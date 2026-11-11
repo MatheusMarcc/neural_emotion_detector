@@ -21,7 +21,7 @@ Dois tipos de curva respondem a perguntas diferentes:
   A) CURVA POR ÉPOCA (custo e F1 de treino × validação ao longo do treino).
      Mostra QUANDO o overfitting começa: o ponto em que o custo de validação
      para de cair e passa a subir. Usamos os históricos salvos pelo script 03
-     (média dos 3 folds, faixa = ±1 desvio).
+     (média dos 5 folds, faixa = ±1 desvio).
 
   B) CURVA POR TAMANHO DO TREINO (F1 final × número de exemplos de treino).
      Treinamos com 10%, 20%, 40%, 70% e 100% de cada fold de treino e
@@ -46,7 +46,7 @@ import math
 import numpy as np
 import pandas as pd
 
-from src import config, dados, graficos
+from src import backend, config, dados, graficos
 from src.mlp import MLP
 
 FRACOES = [0.1, 0.2, 0.4, 0.7, 1.0]
@@ -259,6 +259,7 @@ def fig_tamanho(df):
 
 
 if __name__ == "__main__":
+    print("Onde a MLP roda:", backend.descrever())
     with open(config.RESULTADOS / "03_historicos.json", encoding="utf-8") as f:
         historicos = json.load(f)
 

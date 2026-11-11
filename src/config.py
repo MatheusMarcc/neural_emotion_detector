@@ -9,6 +9,9 @@ Dica: para testar o pipeline inteiro rapidamente, rode com menos épocas
 definindo a variável de ambiente EPOCAS, por exemplo (PowerShell):
     $env:EPOCAS=3; python 05_pesos_e_saturacao.py
 Os resultados oficiais usam o padrão de 50 épocas.
+
+GPU: a variável de ambiente USAR_GPU escolhe onde a MLP roda (padrão "auto":
+modelos grandes na GPU, se houver PyTorch com CUDA). Detalhes em src/backend.py.
 """
 import os
 from pathlib import Path
@@ -45,7 +48,8 @@ EPOCAS = int(os.environ.get("EPOCAS", 50))
 TAMANHO_LOTE = 64     # mini-batch
 TAXA_APRENDIZADO = 0.05
 MOMENTO = 0.9         # SGD com momentum (mesma fórmula do keras.optimizers.SGD)
-N_FOLDS = 3           # 3-fold cross-validation, como pede o enunciado
+N_FOLDS = 5           # 5-fold cross-validation, como pede o enunciado
+NIVEL_CONFIANCA = 0.95   # intervalo de confiança da média dos 5 folds (t de Student)
 # Por que SGD e não Adam? No SGD o tamanho do passo é proporcional ao
 # gradiente (ΔW = -η·g, suavizado pelo momento). Assim, quando o gradiente
 # "some" (sigmoid saturada), os pesos param de mudar — e isso aparece nos

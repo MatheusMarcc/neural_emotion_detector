@@ -1,5 +1,5 @@
 """
-07 — (Ponto extra) Embeddings Skip-Gram com a nossa própria MLP.
+07 — Embeddings Skip-Gram com a nossa própria MLP, no lugar do TF-IDF.
 
 O ENUNCIADO
 -----------
@@ -51,7 +51,7 @@ REPRESENTAÇÕES DOS TWEETS (substituindo o TF-IDF)
   3. [TF-IDF ; MÉDIA]: o TF-IDF original concatenado com a média das
      embeddings -> 3.100 números.
 Todas são avaliadas com a MELHOR configuração do script 03 (mesma arquitetura,
-ativação, L2, otimizador e épocas), nos mesmos 3 folds e no teste.
+ativação, L2, otimizador e épocas), nos mesmos 5 folds e no teste.
 
 DIAGNÓSTICO LINEAR: para cada representação também treinamos uma regressão
 logística. Se nem ela separa as classes, a informação não está na
@@ -61,7 +61,12 @@ Observação: o Skip-Gram usa só os textos do treino (sem rótulos). Na
 validação cruzada ele viu os textos dos folds de validação, mas não os seus
 rótulos — o teste nunca é visto.
 
-Saídas: resultados/07_skipgram.json, 07_vizinhos.csv, figuras/07_*.png
+Na GPU (ver src/backend.py): o Skip-Gram (600 mil pesos, softmax sobre 3.000
+palavras) e as representações densas rodam na placa; a [média ; máximo], que é
+pequena, fica na CPU.
+
+Saídas: resultados/07_skipgram.json, 07_vizinhos.csv, 07_skipgram_comparacao.csv,
+        figuras/07_skipgram_comparacao.png
 """
 import json
 import time
@@ -71,7 +76,7 @@ import numpy as np
 import pandas as pd
 import scipy.sparse as sp
 
-from src import config, dados, graficos
+from src import backend, config, dados, graficos, metricas
 from src.mlp import MLP
 
 DIM = 100            # tamanho do embedding (neurônios da camada oculta)
@@ -120,7 +125,8 @@ def treinar_skipgram(textos):
     vocab, indice, contagem = montar_vocabulario(textos)
     V = len(vocab)
     centrais, contextos = pares_skipgram(textos, indice, contagem, rng)
-    print(f"  vocabulário {V} palavras, {len(centrais):,} pares (central, contexto)".replace(",", "."))
+    n_pares = f"{len(centrais):,}".replace(",", ".")      # 571804 -> 571.804
+    print(f"  vocabulário {V} palavras, {n_pares} pares (central, contexto)")
 
     # A MLP com UMA camada oculta linear — "retire uma camada" da dica
     rede = MLP(V, (DIM,), V, ativacao="linear", l2=0.0, semente=config.SEMENTE)
@@ -130,7 +136,7 @@ def treinar_skipgram(textos):
                         otimizador="adam", semente=config.SEMENTE, avaliar_cada_epoca=False,
                         verbose=True)
     print(f"  Skip-Gram treinado em {time.perf_counter() - t0:.0f}s")
-    embeddings = rede.W[0]            # V x DIM: linha i = embedding da palavra i
+    embeddings = rede.pesos_numpy()[0][0]   # W1 (V x DIM): linha i = embedding da palavra i
     return vocab, indice, embeddings, hist, len(centrais)
 
 
@@ -250,8 +256,8 @@ def fig_comparacao(tab):
         nomes = [REPRESENTACOES[r] for r in tab.representacao]
         y = np.arange(len(nomes))
         for ax, (col_cv, col_dp, col_te, titulo) in zip(
-                eixos, (("acc_cv", "acc_cv_dp", "acc_teste", "Acurácia"),
-                        ("f1_cv", "f1_cv_dp", "f1_teste", "F1 macro"))):
+                eixos, (("acc_cv", "acc_cv_ic", "acc_teste", "Acurácia"),
+                        ("f1_cv", "f1_cv_ic", "f1_teste", "F1 macro"))):
             ax.barh(y - 0.17, tab[col_cv], height=0.32, xerr=tab[col_dp], color=P.serie(0),
                     error_kw=dict(ecolor=P.texto2, lw=1.2, capsize=3))
             ax.barh(y + 0.17, tab[col_te], height=0.32, color=P.serie(2))
@@ -266,7 +272,8 @@ def fig_comparacao(tab):
             ax.grid(axis="y", visible=False)
         eixos[0].set_yticks(y, nomes)
         eixos[0].invert_yaxis()
-        fig.legend(handles=[Patch(color=P.serie(0), label="validação cruzada 3-fold (±1 desvio)"),
+        fig.legend(handles=[Patch(color=P.serie(0), label=f"validação cruzada {config.N_FOLDS}-fold "
+                                                            f"(barra = IC {config.NIVEL_CONFIANCA:.0%})"),
                             Patch(color=P.serie(2), label="teste (2.000 tweets)")],
                    loc="lower center", ncol=2, bbox_to_anchor=(0.5, 0.0))
         fig.suptitle("Skip-Gram no lugar do TF-IDF — mesma MLP (melhor configuração)",
@@ -278,6 +285,7 @@ def fig_comparacao(tab):
 
 
 if __name__ == "__main__":
+    print("Onde a MLP roda:", backend.descrever())
     with open(config.RESULTADOS / "melhor_config.json", encoding="utf-8") as f:
         melhor = json.load(f)
     treino, validacao, teste = dados.carregar_emotion()
@@ -294,7 +302,7 @@ if __name__ == "__main__":
 
     np.savez(config.RESULTADOS / "07_embeddings.npz", embeddings=E, vocabulario=np.array(vocab))
 
-    print("\n2) Melhor configuração com cada representação (3 folds + teste)")
+    print(f"\n2) Melhor configuração com cada representação ({config.N_FOLDS} folds + teste)")
     Ec = E - E.mean(axis=0)           # embeddings centralizados
     folds = dados.montar_folds_tfidf(tx_tr, y_tr)      # os mesmos folds do script 03
     vet = dados.criar_tfidf()
@@ -313,8 +321,10 @@ if __name__ == "__main__":
         h = avaliar(Xa, y_tr, Xb, y_te, melhor, config.SEMENTE)
         lin = diagnostico_linear(Xa, y_tr, Xb, y_te)
         linhas.append(dict(representacao=rep, dimensao=int(Xa.shape[1]),
-                           acc_cv=float(np.mean(accs)), acc_cv_dp=float(np.std(accs)),
-                           f1_cv=float(np.mean(f1s)), f1_cv_dp=float(np.std(f1s)),
+                           acc_cv=float(np.mean(accs)), acc_cv_dp=float(np.std(accs, ddof=1)),
+                           acc_cv_ic=metricas.intervalo_confianca(accs)[1],
+                           f1_cv=float(np.mean(f1s)), f1_cv_dp=float(np.std(f1s, ddof=1)),
+                           f1_cv_ic=metricas.intervalo_confianca(f1s)[1],
                            acc_teste=h["acc_val"][-1], f1_teste=h["f1_val"][-1],
                            acc_treino_mlp=h["acc_treino"][-1],
                            reg_logistica_acc_treino=lin["acc_treino"],

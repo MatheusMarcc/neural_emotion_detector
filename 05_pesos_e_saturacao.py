@@ -57,7 +57,7 @@ import json
 import numpy as np
 from sklearn.feature_selection import chi2
 
-from src import config, dados, graficos
+from src import backend, config, dados, graficos
 from src.mlp import MLP
 
 LIMIAR_SIGMOID = 0.05        # σ < 0,05 ou σ > 0,95  =>  saturado
@@ -68,7 +68,7 @@ LIMIAR_SIGMOID = 0.05        # σ < 0,05 ou σ > 0,95  =>  saturado
 # nenhuma. Num teste com L2, quase toda a "variação" da W1 da sigmoid era esse
 # encolhimento, e o mapa de calor ficaria medindo a L2, não o aprendizado. Sem
 # L2, tudo que ΔW mostra vem do gradiente dos dados. (Na validação cruzada a
-# versão sem L2 da 256-128 empatou com a melhor: F1 0,8204 × 0,8209.)
+# versão sem L2 da 256-128 fica no nível da versão com L2: ver 03_cv_resultados.csv.)
 L2_EXPERIMENTO = 0.0
 
 
@@ -77,7 +77,8 @@ class Monitor:
 
     def __init__(self, modelo, X_monitor):
         self.X = X_monitor
-        self.anterior = [W.copy() for W in modelo.W[:2]]          # W1, W2 no início
+        W, _ = modelo.pesos_numpy()                               # cópia em NumPy (CPU ou GPU)
+        self.anterior = [w.copy() for w in W[:2]]                 # W1, W2 no início
         self.acumulado = [np.zeros_like(W, dtype=np.float64) for W in self.anterior]
         self.var_neuronio = [[], []]   # por época: média de |ΔW| de cada neurônio
         self.norma_delta = [[], []]    # por época: ||ΔW|| (norma de Frobenius)
@@ -87,17 +88,18 @@ class Monitor:
         self.registrar_estado(modelo)  # "época 0" = pesos iniciais
 
     def __call__(self, modelo, epoca):
+        W, _ = modelo.pesos_numpy()
         for l in range(2):
-            delta = modelo.W[l] - self.anterior[l]
+            delta = W[l] - self.anterior[l]
             self.acumulado[l] += np.abs(delta)                  # V += |ΔW|
             self.var_neuronio[l].append(np.abs(delta).mean(axis=0))  # uma coluna = um neurônio
             self.norma_delta[l].append(float(np.linalg.norm(delta)))
-            self.norma_W[l].append(float(np.linalg.norm(modelo.W[l])))
-            self.anterior[l] = modelo.W[l].copy()
+            self.norma_W[l].append(float(np.linalg.norm(W[l])))
+            self.anterior[l] = W[l].copy()
         self.registrar_estado(modelo)
 
     def registrar_estado(self, modelo):
-        Z, A = modelo.forward(self.X)
+        Z, A = modelo.forward_numpy(self.X)
         if self.z_inicio is None:
             self.z_inicio = [Z[0].copy(), Z[1].copy()]
         self.z_fim = [Z[0], Z[1]]
@@ -352,6 +354,7 @@ def fig_histograma_z(mon, rotulo_controle):
 
 # ===========================================================================
 if __name__ == "__main__":
+    print("Onde a MLP roda:", backend.descrever())
     with open(config.RESULTADOS / "melhor_config.json", encoding="utf-8") as f:
         melhor = json.load(f)
     camadas, l2 = tuple(melhor["camadas"]), L2_EXPERIMENTO

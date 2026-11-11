@@ -4,3 +4,8 @@ pandas>=2.0
 scikit-learn>=1.5
 matplotlib>=3.8
 tensorflow>=2.16  # Keras 3; usado só no script 02 (comparação com o Keras)
+
+# GPU (opcional): PyTorch com CUDA, instalado À PARTE porque o pip comum traz a
+# versão só-CPU no Windows. Para placas NVIDIA (ex.: RTX 3050):
+#   python -m pip install torch --index-url https://download.pytorch.org/whl/cu126
+# Sem PyTorch com CUDA, tudo roda na CPU (NumPy), com os mesmos resultados.

@@ -1,0 +1,11 @@
+palavra,vizinhos
+happy,"excited (0.65), prepared (0.61), forever (0.58), lucky (0.53), afraid (0.52), report (0.51)"
+sad,"angry (0.74), confused (0.70), hopeless (0.68), lonely (0.67), needy (0.66), unhappy (0.65)"
+angry,"sad (0.74), upset (0.72), unhappy (0.70), mad (0.68), confused (0.64), defeated (0.64)"
+scared,"indecisive (0.73), gloomy (0.71), anxious (0.71), lonely (0.69), defeated (0.68), nervous (0.67)"
+love,"letters (0.51), trust (0.51), telling (0.50), loving (0.50), supported (0.49), presence (0.49)"
+surprised,"amazed (0.62), wondering (0.57), shocked (0.57), amused (0.55), frightened (0.51), intimidated (0.50)"
+amazing,"wonderful (0.53), important (0.53), admired (0.49), issue (0.48), precious (0.48), mistake (0.46)"
+lonely,"anxious (0.72), listless (0.69), nauseous (0.69), tad (0.69), gloomy (0.69), disheartened (0.69)"
+nervous,"worried (0.74), nostalgic (0.73), anxious (0.72), gloomy (0.70), disheartened (0.70), irritable (0.67)"
+grateful,"thankful (0.73), blessed (0.59), prayed (0.52), sensitive (0.51), lucky (0.47), cared (0.45)"

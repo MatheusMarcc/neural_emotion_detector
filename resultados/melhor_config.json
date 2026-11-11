@@ -1,14 +1,29 @@
 {
- "config": "relu | L2=0.0001 | 256-128",
+ "config": "relu | L2=sem | 256-128",
  "ativacao": "relu",
- "l2": 0.0001,
+ "l2": 0.0,
  "camadas": [
   256,
   128
  ],
- "f1_val_media": 0.8262723903178641,
- "f1_val_desvio": 0.006668972692780712,
- "acc_val_media": 0.863312815318674,
- "acc_val_desvio": 0.0037036291704531515,
- "criterio": "maior F1 macro média nos 3 folds (última época)"
+ "n_folds": 5,
+ "nivel_confianca": 0.95,
+ "f1_val_media": 0.8234284376948114,
+ "f1_val_desvio": 0.007347743048111548,
+ "f1_val_ic": 0.009123428010892108,
+ "acc_val_media": 0.86625,
+ "acc_val_desvio": 0.003717305391678282,
+ "acc_val_ic": 0.004615644275175623,
+ "auc_macro_val_media": 0.9825862305718938,
+ "auc_macro_val_ic": 0.001381175313629894,
+ "f1_por_fold": [
+  0.8119713807615837,
+  0.821446369993254,
+  0.824862496205946,
+  0.8276078915579274,
+  0.8312540499553465
+ ],
+ "baseline_f1_val_media": 0.1686715176544158,
+ "baseline_acc_val_media": 0.240625,
+ "criterio": "maior F1 macro média nos 5 folds (última época)"
 }

@@ -5,6 +5,10 @@ Nada de autograd aqui: o forward, a função de custo, as derivadas (regra da
 cadeia) e a atualização dos pesos estão escritos à mão. O Keras só aparece no
 script 02, para conferir que esta implementação calcula exatamente o mesmo.
 
+CPU OU GPU: as contas passam pelas funções de src/backend.py, que fazem a
+mesma operação com NumPy (CPU) ou com PyTorch (GPU). As equações abaixo são
+as mesmas nos dois casos; na GPU só muda ONDE as matrizes moram.
+
 TEORIA — MLP com duas camadas ocultas
 =====================================
 
@@ -98,8 +102,10 @@ produto é X @ W. Cada LINHA de X é um exemplo.
 import time
 
 import numpy as np
-from scipy.special import expit  # sigmoid numericamente estável
+import scipy.sparse as sp
 from sklearn.metrics import f1_score
+
+from . import backend as B   # mesma conta na CPU (NumPy) ou na GPU (PyTorch)
 
 
 # ===========================================================================
@@ -109,17 +115,17 @@ from sklearn.metrics import f1_score
 # Usar A evita recalcular a função: na sigmoid, f'(z) = A·(1 - A).
 
 def relu(z):
-    return np.maximum(z, 0)
+    return B.maximo_zero(z)              # max(z, 0)
 
 
 def d_relu(z, a):
     # 1 onde o neurônio está ativo (z > 0), 0 onde está desligado
-    return (z > 0).astype(z.dtype)
+    return B.indicador_positivo(z)
 
 
 def sigmoid(z):
-    # expit(z) = 1 / (1 + e^-z), sem estourar para |z| grande
-    return expit(z)
+    # 1 / (1 + e^-z), calculada de forma estável (sem estourar para |z| grande)
+    return B.sigmoide(z)
 
 
 def d_sigmoid(z, a):
@@ -132,7 +138,7 @@ def linear(z):
 
 
 def d_linear(z, a):
-    return np.ones_like(z)
+    return B.uns_como(z)
 
 
 ATIVACOES = {
@@ -148,22 +154,20 @@ ATIVACOES = {
 def softmax(z):
     # Subtrair o máximo de cada linha não muda o resultado (o fator e^-max
     # aparece em cima e embaixo da fração) e evita exp() de números enormes.
-    z = z - z.max(axis=1, keepdims=True)
-    e = np.exp(z)
-    return e / e.sum(axis=1, keepdims=True)
+    z = z - B.max_por_linha(z)
+    e = B.exp(z)
+    return e / B.soma_por_linha(e)
 
 
 def log_softmax(z):
     # log P = z - log(Σ e^z), calculado de forma estável (log-sum-exp)
-    z = z - z.max(axis=1, keepdims=True)
-    return z - np.log(np.exp(z).sum(axis=1, keepdims=True))
+    z = z - B.max_por_linha(z)
+    return z - B.log(B.soma_por_linha(B.exp(z)))
 
 
 def one_hot(y, n_classes, dtype=np.float32):
     """Rótulo 2 com 6 classes -> [0, 0, 1, 0, 0, 0]."""
-    Y = np.zeros((len(y), n_classes), dtype=dtype)
-    Y[np.arange(len(y)), y] = 1
-    return Y
+    return B.one_hot(y, n_classes, dtype)
 
 
 # ===========================================================================
@@ -173,7 +177,7 @@ class MLP:
     """MLP com qualquer número de camadas ocultas e saída softmax.
 
     No projeto usamos camadas_ocultas=(n1, n2) — duas camadas ocultas. O
-    Skip-Gram (extra) usa a mesma classe com UMA camada oculta linear, como
+    Skip-Gram (script 07) usa a mesma classe com UMA camada oculta linear, como
     sugere a dica do enunciado ("retire uma camada").
 
     Parâmetros
@@ -186,10 +190,12 @@ class MLP:
     semente         : semente da inicialização dos pesos
     dtype           : float32 (padrão, igual ao Keras) ou float64 (para o
                       teste de derivadas por diferenças finitas)
+    dispositivo     : "auto" (GPU para modelos grandes, se houver; ver
+                      src/backend.py), "cpu" ou "gpu"
     """
 
     def __init__(self, n_entrada, camadas_ocultas, n_saida, ativacao="relu",
-                 l2=0.0, semente=0, dtype=np.float32):
+                 l2=0.0, semente=0, dtype=np.float32, dispositivo="auto"):
         self.tamanhos = [n_entrada, *camadas_ocultas, n_saida]
         self.ativacao = ativacao
         self.f, self.df = ATIVACOES[ativacao]
@@ -204,12 +210,28 @@ class MLP:
             self.W.append(rng.uniform(-a, a, size=(fan_in, fan_out)).astype(dtype))
             self.b.append(np.zeros(fan_out, dtype=dtype))   # bias começa em zero
 
+        # Os pesos são sorteados sempre na CPU, com a mesma semente: a rede começa
+        # igual na CPU e na GPU. Se o modelo for para a GPU, as matrizes são copiadas.
+        self.dispositivo = B.escolher(dispositivo, self.n_parametros())
+        if self.na_gpu:
+            self.W = [B.para_dispositivo(W, self.dispositivo, dtype) for W in self.W]
+            self.b = [B.para_dispositivo(b, self.dispositivo, dtype) for b in self.b]
+
+    @property
+    def na_gpu(self):
+        """True quando as contas rodam com PyTorch (GPU, ou o modo de teste torch-cpu)."""
+        return self.dispositivo != "cpu"
+
+    def pesos_numpy(self):
+        """Cópia dos pesos e bias como arrays NumPy (para análises e figuras)."""
+        return [B.para_numpy(W) for W in self.W], [B.para_numpy(b) for b in self.b]
+
     @property
     def n_camadas(self):
         return len(self.W)   # camadas com pesos (ocultas + saída)
 
     def n_parametros(self):
-        return sum(W.size + b.size for W, b in zip(self.W, self.b))
+        return sum(int(np.prod(W.shape)) + int(np.prod(b.shape)) for W, b in zip(self.W, self.b))
 
     # -----------------------------------------------------------------------
     # 1) Forward
@@ -222,6 +244,7 @@ class MLP:
           A : lista com as entradas de cada camada + saída [X, A1, A2, P]
               (A[l] é a ENTRADA da camada l; A[-1] são as probabilidades)
         X pode ser denso (numpy) ou esparso (scipy): X @ W funciona nos dois.
+        Na GPU, X já chega como tensor denso na placa (ver treinar).
         """
         A = [X]
         Z = []
@@ -234,6 +257,15 @@ class MLP:
                 A.append(softmax(z))                    # saída: P = softmax(Z)
         return Z, A
 
+    def forward_numpy(self, X):
+        """forward() com o resultado em NumPy (usado pelas análises do script 05)."""
+        Z, A = self.forward(self._no_dispositivo(X))
+        return [B.para_numpy(z) for z in Z], [X] + [B.para_numpy(a) for a in A[1:]]
+
+    def _no_dispositivo(self, X):
+        """Entrada pronta para o forward: tensor na GPU, ou X como está na CPU."""
+        return B.para_dispositivo(X, self.dispositivo, self.dtype) if self.na_gpu else X
+
     # -----------------------------------------------------------------------
     # 2) Função de custo
     # -----------------------------------------------------------------------
@@ -241,12 +273,13 @@ class MLP:
         """λ · Σ_l ||W_l||²  (o bias fica de fora)."""
         if self.l2 == 0:
             return 0.0
-        return self.l2 * sum(float(np.sum(W.astype(np.float64) ** 2)) for W in self.W)
+        return self.l2 * sum(B.soma_quadrados(W) for W in self.W)
 
     def entropia_cruzada(self, X, y):
         """-(1/N) Σ log P[i, y_i], calculada pelos logits (estável)."""
-        Z, _ = self.forward(X)
-        logp = log_softmax(Z[-1].astype(np.float64))
+        Z, _ = self.forward(self._no_dispositivo(X))
+        z = Z[-1].double() if B.eh_tensor(Z[-1]) else Z[-1].astype(np.float64)
+        logp = B.para_numpy(log_softmax(z))
         return float(-logp[np.arange(len(y)), y].mean())
 
     def perda_total(self, X, y):
@@ -276,7 +309,7 @@ class MLP:
             grad_W[l] = A[l].T @ dZ
             if self.l2 > 0:
                 grad_W[l] += 2 * self.l2 * self.W[l]     # derivada de λ||W||²
-            grad_b[l] = dZ.sum(axis=0)
+            grad_b[l] = B.soma_por_coluna(dZ)
 
             if l > 0:
                 # (c) propaga para a camada anterior
@@ -288,6 +321,11 @@ class MLP:
 
     def gradientes(self, X, y):
         """Atalho: forward + backward num lote (usado na conferência de derivadas)."""
+        if self.na_gpu:
+            Z, A = self.forward(self._no_dispositivo(X))
+            Y = one_hot(B.vetor_indices(y, self.dispositivo), self.n_saida, self.dtype)
+            gW, gb = self.backward(Z, A, Y)
+            return [B.para_numpy(g) for g in gW], [B.para_numpy(g) for g in gb]
         Z, A = self.forward(X)
         return self.backward(Z, A, one_hot(y, self.n_saida, self.dtype))
 
@@ -295,8 +333,14 @@ class MLP:
     # Predição e métricas
     # -----------------------------------------------------------------------
     def prever_proba(self, X, lote=8192):
-        """Probabilidades das classes, em pedaços para não estourar a memória."""
-        saidas = [self.forward(X[i:i + lote])[1][-1] for i in range(0, X.shape[0], lote)]
+        """Probabilidades das classes (array NumPy), em pedaços para não estourar a memória.
+
+        Na GPU, X pode já estar na placa (tensor) ou na CPU (cada pedaço é copiado).
+        """
+        saidas = []
+        for i in range(0, X.shape[0], lote):
+            pedaco = self._no_dispositivo(X[i:i + lote])
+            saidas.append(B.para_numpy(self.forward(pedaco)[1][-1]))
         return np.vstack(saidas)
 
     def prever(self, X):
@@ -327,16 +371,26 @@ class MLP:
         ao_fim_da_epoca(modelo, epoca): função opcional chamada no fim de cada
         época (o script 05 usa para guardar a variação dos pesos).
         otimizador: "sgd" (SGD com momentum, usado em todo o projeto) ou
-        "adam" (só no experimento de controle do script 05).
+        "adam" (o controle do script 05 e o Skip-Gram do script 07).
+
+        Na GPU: X e X_val são copiados UMA vez para a placa (densos) e os lotes
+        são recortados lá; se X não couber (o Skip-Gram tem 571 mil linhas),
+        cada lote é recortado na CPU e copiado. A ordem dos lotes é a mesma da CPU.
         """
         rng = np.random.default_rng(semente)
         n = X.shape[0]
+        gpu = self.na_gpu
+        if gpu:
+            X_disp = self._no_dispositivo(X) if B.cabe_na_gpu(X) else None
+            y_disp = B.vetor_indices(y, self.dispositivo)
+            if X_val is not None and B.cabe_na_gpu(X_val):
+                X_val = self._no_dispositivo(X_val)
         # SGD: velocidades do momentum, uma por parâmetro, começando em zero
         # Adam: os mesmos vetores guardam a média do gradiente (m) e criamos s
-        vel_W = [np.zeros_like(W) for W in self.W]
-        vel_b = [np.zeros_like(b) for b in self.b]
-        s_W = [np.zeros_like(W) for W in self.W] if otimizador == "adam" else None
-        s_b = [np.zeros_like(b) for b in self.b] if otimizador == "adam" else None
+        vel_W = [B.zeros_como(W) for W in self.W]
+        vel_b = [B.zeros_como(b) for b in self.b]
+        s_W = [B.zeros_como(W) for W in self.W] if otimizador == "adam" else None
+        s_b = [B.zeros_como(b) for b in self.b] if otimizador == "adam" else None
         passo = 0
 
         hist = {k: [] for k in ["perda_treino", "acc_treino", "f1_treino",
@@ -348,33 +402,33 @@ class MLP:
         for epoca in range(1, epocas + 1):
             t0 = time.perf_counter()
             perm = rng.permutation(n)             # nova ordem dos exemplos
-            soma_perda, normas, n_lotes = 0.0, np.zeros(self.n_camadas), 0
+            soma_perda, normas, n_lotes = 0.0, 0.0, 0
+            if gpu:
+                perm_disp = B.vetor_indices(perm, self.dispositivo)   # a mesma ordem, na placa
 
             for inicio in range(0, n, tamanho_lote):
                 idx = perm[inicio:inicio + tamanho_lote]
-                Xb = X[idx]
-                Yb = one_hot(y[idx], self.n_saida, self.dtype)
+                if gpu:
+                    idx_disp = perm_disp[inicio:inicio + tamanho_lote]
+                    Xb = X_disp[idx_disp] if X_disp is not None else self._no_dispositivo(X[idx])
+                    yb = y_disp[idx_disp]
+                else:
+                    Xb, yb = X[idx], y[idx]
+                Yb = one_hot(yb, self.n_saida, self.dtype)
 
                 Z, A = self.forward(Xb)
                 grad_W, grad_b = self.backward(Z, A, Yb)
 
                 # perda do lote (só para acompanhar; igual ao "loss" que o Keras imprime)
-                p_certa = A[-1][np.arange(len(idx)), y[idx]]
-                soma_perda += float(-np.log(np.clip(p_certa, 1e-12, None)).mean())
+                soma_perda += B.perda_do_lote(A[-1], yb)
                 if registrar_gradientes:
-                    normas += [np.linalg.norm(g) for g in grad_W]
+                    normas += B.normas(grad_W)
                 n_lotes += 1
 
                 if otimizador == "sgd":
-                    # atualização: v <- μv - ηg ; W <- W + v
-                    # (feita "no lugar", sem criar matrizes temporárias — mesma conta)
-                    for l in range(self.n_camadas):
-                        vel_W[l] *= momento
-                        vel_W[l] -= taxa * grad_W[l]
-                        vel_b[l] *= momento
-                        vel_b[l] -= taxa * grad_b[l]
-                        self.W[l] += vel_W[l]
-                        self.b[l] += vel_b[l]
+                    # atualização: v <- μv - ηg ; W <- W + v   (pesos e bias, "no lugar")
+                    B.sgd_momentum(self.W + self.b, vel_W + vel_b, grad_W + grad_b,
+                                   taxa, momento)
                 else:
                     # Adam: passo de tamanho ~η em cada peso, normalizado por √s
                     passo += 1
@@ -384,17 +438,17 @@ class MLP:
                                            (self.b, grad_b, vel_b, s_b)):
                             M[l] += (1 - beta1) * (G[l] - M[l])
                             S[l] += (1 - beta2) * (G[l] ** 2 - S[l])
-                            P[l] -= alfa * M[l] / (np.sqrt(S[l]) + eps)
+                            P[l] -= alfa * M[l] / (B.raiz(S[l]) + eps)
 
             # tempo só do treino (sem a avaliação abaixo) — usado na comparação com o Keras
             hist["tempo"].append(time.perf_counter() - t0)
-            hist["perda_media_lotes"].append(soma_perda / n_lotes)
+            hist["perda_media_lotes"].append(float(soma_perda) / n_lotes)
             if registrar_gradientes:
-                hist["norma_grad"].append((normas / n_lotes).tolist())
+                hist["norma_grad"].append((B.para_numpy(normas) / n_lotes).tolist())
 
             # métricas no fim da época (conjunto inteiro, sem dropout/ruído)
             if avaliar_cada_epoca:
-                m_tr = self.avaliar(X, y)
+                m_tr = self.avaliar(X_disp if gpu and X_disp is not None else X, y)
                 hist["perda_treino"].append(m_tr["perda"])
                 hist["acc_treino"].append(m_tr["acc"])
                 hist["f1_treino"].append(m_tr["f1"])

@@ -1,0 +1,14 @@
+{
+ "config": "relu | L2=0.0001 | 256-128",
+ "ativacao": "relu",
+ "l2": 0.0001,
+ "camadas": [
+  256,
+  128
+ ],
+ "f1_val_media": 0.8262723903178641,
+ "f1_val_desvio": 0.006668972692780712,
+ "acc_val_media": 0.863312815318674,
+ "acc_val_desvio": 0.0037036291704531515,
+ "criterio": "maior F1 macro média nos 3 folds (última época)"
+}

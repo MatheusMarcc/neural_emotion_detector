@@ -1,0 +1,8 @@
+# GPU NVIDIA GeForce RTX 3050 Laptop GPU (PyTorch 2.11.0+cu128, CUDA 12.8) para modelos com >= 300.000 parâmetros
+01_estudo_base	pulado	0 s
+02_derivadas_e_keras	pulado	0 s
+03_validacao_cruzada	ok	407 s
+04_curvas_aprendizado	ok	543 s
+05_pesos_e_saturacao	pulado	0 s
+06_modelo_final	ok	23 s
+07_skipgram_extra	ok	456 s

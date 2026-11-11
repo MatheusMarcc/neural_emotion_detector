@@ -60,7 +60,7 @@ def erro_relativo(a, b):
 def conferir_diferencas_finitas(X, y, ativacao, l2, n_amostras=25, eps=1e-6):
     rng = np.random.default_rng(0)
     modelo = MLP(X.shape[1], CAMADAS_REF, config.N_CLASSES, ativacao=ativacao,
-                 l2=l2, semente=config.SEMENTE, dtype=np.float64)
+                 l2=l2, semente=config.SEMENTE, dtype=np.float64, dispositivo="cpu")
     # dá uma "sacudida" nos bias (que começam em zero) para o teste valer
     # também longe da inicialização
     for b in modelo.b:
@@ -98,7 +98,7 @@ def conferir_diferencas_finitas(X, y, ativacao, l2, n_amostras=25, eps=1e-6):
 # ---------------------------------------------------------------------------
 def conferir_keras_mesmo_lote(X, y, ativacao, l2):
     modelo = MLP(X.shape[1], CAMADAS_REF, config.N_CLASSES, ativacao=ativacao,
-                 l2=l2, semente=config.SEMENTE)
+                 l2=l2, semente=config.SEMENTE, dispositivo="cpu")
     keras_m = construir_keras(X.shape[1], CAMADAS_REF, config.N_CLASSES, ativacao, l2)
     copiar_pesos(modelo, keras_m)
 
@@ -121,7 +121,7 @@ def conferir_keras_mesmo_lote(X, y, ativacao, l2):
 # ---------------------------------------------------------------------------
 def treinar_lado_a_lado(X_tr, y_tr, X_va, y_va, ativacao, l2):
     modelo = MLP(X_tr.shape[1], CAMADAS_REF, config.N_CLASSES, ativacao=ativacao,
-                 l2=l2, semente=config.SEMENTE)
+                 l2=l2, semente=config.SEMENTE, dispositivo="cpu")   # comparação com o Keras: CPU
     keras_m = compilar(construir_keras(X_tr.shape[1], CAMADAS_REF, config.N_CLASSES,
                                        ativacao, l2),
                        config.TAXA_APRENDIZADO, config.MOMENTO)
