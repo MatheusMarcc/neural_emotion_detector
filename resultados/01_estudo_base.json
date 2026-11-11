@@ -1,0 +1,62 @@
+{
+ "n_treino": 16000,
+ "n_validacao": 2000,
+ "n_teste": 2000,
+ "razao_desbalanceamento": 9.374125874125873,
+ "classe_maior": "joy",
+ "classe_menor": "surprise",
+ "acuracia_classe_majoritaria_teste": 0.3475,
+ "palavras_por_tweet": {
+  "media": 19.1663125,
+  "mediana": 17.0,
+  "p95": 41.0,
+  "max": 66
+ },
+ "vocabulario_total": 15212,
+ "palavras_com_freq_ao_menos_5": 3494,
+ "cobertura_tokens_top_3000": 0.9328998470623914,
+ "textos_duplicados_treino": 31,
+ "textos_em_treino_e_teste": 11,
+ "palavras_mais_frequentes": [
+  [
+   "i",
+   25859
+  ],
+  [
+   "feel",
+   11183
+  ],
+  [
+   "and",
+   9589
+  ],
+  [
+   "to",
+   8972
+  ],
+  [
+   "the",
+   8370
+  ],
+  [
+   "a",
+   6200
+  ],
+  [
+   "feeling",
+   5112
+  ],
+  [
+   "that",
+   5112
+  ],
+  [
+   "of",
+   4990
+  ],
+  [
+   "my",
+   4283
+  ]
+ ]
+}
